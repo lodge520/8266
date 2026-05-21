@@ -29,10 +29,21 @@ WiFiUDP udp;
 
 // ===================== 固件信息 =====================
 #define FW_DEVICE_TYPE  "lamp"
-#define FW_TYPE         FW_DEVICE_TYPE
 #define FW_VERSION      "1.0.2"
 #define FW_VERSION_CODE 10002
 #define FW_CHANNEL      "stable"
+
+// ===================== 命名常量（原魔法数字） =====================
+const float   WAVE_FREQ_FACTOR          = 0.32f;
+const float   TOF_TRANSITION_MS         = 2000.0f;
+const uint16_t TOF_MAX_RANGE_MM         = 8200;
+const unsigned long TOF_DEBOUNCE_MS     = 1000;
+const unsigned long TOF_READ_INTERVAL_MS = 50;
+const char*   AP_DEFAULT_PASSWORD       = "12345678";
+const char*   WS_PATH                   = "/ws/device";
+const int     LOCATE_MIN_BRIGHTNESS     = 5;
+const int     LOCATE_MAX_BRIGHTNESS     = 100;
+const int     LOCATE_STEPS              = 36;
 
 // ===================== 默认服务器配置 =====================
 const char* DEFAULT_SERVER_HOST = "device.genius.show";
@@ -40,13 +51,15 @@ const uint16_t DEFAULT_HTTP_PORT = 80;
 const uint16_t DEFAULT_WS_PORT   = 80;
 
 // ===================== 定时参数 =====================
-const unsigned long lightSendInterval    = 30000;    // 30秒上传一次光照
-const unsigned long lightUpdateInterval  = 50;     // 最小灯光刷新间隔
-const unsigned long wifiConnectTimeout   = 15000;  // 已保存WiFi连接超时
-const unsigned long smartConfigTimeout   = 60000;  // SmartConfig超时
-const unsigned long announceInterval     = 5000;   // 上报间隔
-const unsigned long broadcastInterval    = 5000;   // UDP广播间隔
-const unsigned long wsPingInterval       = 5000;  // WebSocket心跳间隔
+const unsigned long lightSendInterval    = 30000;
+const unsigned long lightUpdateInterval  = 50;
+const unsigned long wifiConnectTimeout   = 15000;
+const unsigned long smartConfigTimeout   = 60000;
+const unsigned long announceInterval     = 5000;
+const unsigned long broadcastInterval    = 5000;
+const unsigned long wsPingInterval       = 5000;
+const unsigned long otaProgressReportMinIntervalMs = 3000;
+const int           otaProgressReportMinStep       = 5;
 
 const int udpPort = 4210;
 static const uint32_t NANO_BAUD = 57600;
@@ -70,6 +83,11 @@ unsigned long lastLightUpdate = 0;
 unsigned long lastAnnounce = 0;
 unsigned long lastBroadcast = 0;
 unsigned long lastPing = 0;
+unsigned long lastToFRead = 0;
+
+// 广播IP缓存
+IPAddress cachedBroadcastIP;
+bool broadcastIPCached = false;
 
 // ===================== 灯光控制参数 =====================
 int brightness = 80;
@@ -130,6 +148,11 @@ void pollNano();
 void applyLightSettings(int br, int tp);
 void stopEffectWaveForManualControl();
 void updateEffectLoop();
+void addCorsHeaders();
+void addCorsHeadersWithMethods();
+int  postJsonToServer(const String& path, const String& jsonBody);
+void ensureConfigDefaults(DeviceConfig& c);
+void refreshBroadcastIP();
 // ===================== 工具函数 =====================
 String configPath() {
   return "/config.json";
@@ -171,6 +194,45 @@ int compareVersion(const String& a, const String& b) {
   if (a2 != b2) return (a2 > b2) ? 1 : -1;
   if (a3 != b3) return (a3 > b3) ? 1 : -1;
   return 0;
+}
+
+// ---- 通用 HTTP / CORS / 配置 辅助 ----
+
+void addCorsHeaders() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+}
+
+void addCorsHeadersWithMethods() {
+  addCorsHeaders();
+  server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
+int postJsonToServer(const String& path, const String& jsonBody) {
+  WiFiClient client;
+  HTTPClient http;
+  http.begin(client, httpUrl(path));
+  http.addHeader("Content-Type", "application/json");
+  int httpCode = http.POST(jsonBody);
+  if (httpCode > 0) {
+    DEBUG_SERIAL.printf("[HTTP] POST %s -> %d\n", path.c_str(), httpCode);
+    DEBUG_SERIAL.println(http.getString());
+  } else {
+    DEBUG_SERIAL.printf("[HTTP] POST %s failed: %s\n", path.c_str(), http.errorToString(httpCode).c_str());
+  }
+  http.end();
+  return httpCode;
+}
+
+void ensureConfigDefaults(DeviceConfig& c) {
+  if (c.serverHost.length() == 0) c.serverHost = DEFAULT_SERVER_HOST;
+  if (c.httpPort == 0) c.httpPort = DEFAULT_HTTP_PORT;
+  if (c.wsPort == 0) c.wsPort = DEFAULT_WS_PORT;
+}
+
+void refreshBroadcastIP() {
+  cachedBroadcastIP = calcBroadcastIP();
+  broadcastIPCached = true;
 }
 
 // ===================== 配置读写 =====================
@@ -358,9 +420,10 @@ bool smartConfigProvision(unsigned long timeoutMs) {
   DeviceConfig newCfg;
   newCfg.ssid = WiFi.SSID();
   newCfg.password = WiFi.psk();
-  newCfg.serverHost = cfg.serverHost.length() ? cfg.serverHost : String(DEFAULT_SERVER_HOST);
-  newCfg.httpPort = cfg.httpPort ? cfg.httpPort : DEFAULT_HTTP_PORT;
-  newCfg.wsPort = cfg.wsPort ? cfg.wsPort : DEFAULT_WS_PORT;
+  newCfg.serverHost = cfg.serverHost;
+  newCfg.httpPort = cfg.httpPort;
+  newCfg.wsPort = cfg.wsPort;
+  ensureConfigDefaults(newCfg);
 
   cfg = newCfg;
   saveConfig(cfg);
@@ -394,11 +457,11 @@ void startConfigPortal() {
 
   String apName = "LightConfig_" + deviceId;
 
-  bool apOk = WiFi.softAP(apName.c_str(), "12345678", 1, false, 4);
+  bool apOk = WiFi.softAP(apName.c_str(), AP_DEFAULT_PASSWORD, 1, false, 4);
 
   DEBUG_SERIAL.println("[AP] 进入网页配网模式");
   DEBUG_SERIAL.println("[AP] 热点名称: " + apName);
-  DEBUG_SERIAL.println("[AP] 密码: 12345678");
+  DEBUG_SERIAL.println("[AP] 密码: " + String(AP_DEFAULT_PASSWORD));
 
   if (!apOk) {
     DEBUG_SERIAL.println("[AP] 热点启动失败！");
@@ -427,9 +490,7 @@ void startConfigPortal() {
       return;
     }
 
-    if (newCfg.serverHost.length() == 0) newCfg.serverHost = DEFAULT_SERVER_HOST;
-    if (newCfg.httpPort == 0) newCfg.httpPort = DEFAULT_HTTP_PORT;
-    if (newCfg.wsPort == 0) newCfg.wsPort = DEFAULT_WS_PORT;
+    ensureConfigDefaults(newCfg);
 
     if (!saveConfig(newCfg)) {
       server.send(500, "text/plain; charset=utf-8", "保存失败");
@@ -474,8 +535,8 @@ void otaProgressCallback(int current, int total) {
   unsigned long now = millis();
   if (
     lastOtaProgressReport < 0 ||
-    percent - lastOtaProgressReport >= 10 ||
-    now - lastOtaProgressReportMs >= 2000 ||
+    percent - lastOtaProgressReport >= otaProgressReportMinStep ||
+    now - lastOtaProgressReportMs >= otaProgressReportMinIntervalMs ||
     percent == 100
   ) {
     lastOtaProgressReport = percent;
@@ -558,14 +619,12 @@ void doOtaUpdate(const String& url, const String& version) {
 }
 
 void handleStatus() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCorsHeaders();
   server.send(200, "application/json", "{\"status\":\"已配网\"}");
 }
 
 void handleSetLight() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.sendHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
-  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  addCorsHeadersWithMethods();
 
   if (server.method() == HTTP_OPTIONS) {
     server.send(204);
@@ -608,28 +667,28 @@ void handleSetLight() {
 void handleResumeBroadcast() {
   enableBroadcast = true;
   enableAnnounce = true;
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCorsHeaders();
   server.send(200, "application/json", "{\"status\":\"resumed\"}");
   DEBUG_SERIAL.println("接收到网页指令：恢复广播");
 }
 
 void handleStopBroadcast() {
   enableBroadcast = false;
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCorsHeaders();
   server.send(200, "application/json", "{\"result\":\"Broadcast stopped\"}");
   DEBUG_SERIAL.println("接收到网页指令：停止广播");
 }
 
 void handleStopAnnounce() {
   enableAnnounce = false;
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCorsHeaders();
   server.send(200, "application/json", "{\"result\":\"Announce stopped\"}");
   DEBUG_SERIAL.println("接收到网页指令：停止上报");
 }
 
 void handleResetWifi() {
   clearConfig();
-  server.sendHeader("Access-Control-Allow-Origin", "*");
+  addCorsHeaders();
   server.send(200, "application/json", "{\"result\":\"WiFi config cleared, restarting\"}");
   delay(800);
   ESP.restart();
@@ -638,9 +697,7 @@ void handleResetWifi() {
 void setupDeviceHttpServer() {
   server.onNotFound([]() {
     if (server.method() == HTTP_OPTIONS) {
-      server.sendHeader("Access-Control-Allow-Origin", "*");
-      server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-      server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+      addCorsHeadersWithMethods();
       server.send(204);
     } else {
       server.send(404);
@@ -699,21 +756,15 @@ void pollNano() {
   }
 }
 
-int clampArmValue(int value, int minValue, int maxValue) {
-  if (value < minValue) return minValue;
-  if (value > maxValue) return maxValue;
-  return value;
-}
-
 void sendPanTilt() {
-  panDeg = clampArmValue(panDeg, PAN_MIN, PAN_MAX);
-  tiltDeg = clampArmValue(tiltDeg, TILT_MIN, TILT_MAX);
+  panDeg = constrain(panDeg, PAN_MIN, PAN_MAX);
+  tiltDeg = constrain(tiltDeg, TILT_MIN, TILT_MAX);
   sendNano('p', String(panDeg));
   sendNano('t', String(tiltDeg));
 }
 
 void sendSlider() {
-  sliderMm = clampArmValue(sliderMm, SLIDER_MIN, SLIDER_MAX);
+  sliderMm = constrain(sliderMm, SLIDER_MIN, SLIDER_MAX);
   sendNano('x', String(sliderMm));
 }
 
@@ -766,19 +817,19 @@ void handleArmAction(const String& action, const String& speed) {
 
   if (normalizedAction == "up") {
     tiltDeg += angleStep;
-    tiltDeg = clampArmValue(tiltDeg, TILT_MIN, TILT_MAX);
+    tiltDeg = constrain(tiltDeg, TILT_MIN, TILT_MAX);
     sendNano('t', String(tiltDeg));
   } else if (normalizedAction == "down") {
     tiltDeg -= angleStep;
-    tiltDeg = clampArmValue(tiltDeg, TILT_MIN, TILT_MAX);
+    tiltDeg = constrain(tiltDeg, TILT_MIN, TILT_MAX);
     sendNano('t', String(tiltDeg));
   } else if (normalizedAction == "left") {
     panDeg -= angleStep;
-    panDeg = clampArmValue(panDeg, PAN_MIN, PAN_MAX);
+    panDeg = constrain(panDeg, PAN_MIN, PAN_MAX);
     sendNano('p', String(panDeg));
   } else if (normalizedAction == "right") {
     panDeg += angleStep;
-    panDeg = clampArmValue(panDeg, PAN_MIN, PAN_MAX);
+    panDeg = constrain(panDeg, PAN_MIN, PAN_MAX);
     sendNano('p', String(panDeg));
   } else if (normalizedAction == "center") {
     panDeg = 0;
@@ -1070,10 +1121,10 @@ void beginWebSocketClient() {
   DEBUG_SERIAL.println("[WS] 准备连接:");
   DEBUG_SERIAL.println("host = " + cfg.serverHost);
   DEBUG_SERIAL.println("port = " + String(cfg.wsPort));
-  DEBUG_SERIAL.println("path = /ws/device");
-  DEBUG_SERIAL.println("url  = ws://" + cfg.serverHost + ":" + String(cfg.wsPort) + "/ws/device");
+  DEBUG_SERIAL.println("path = " + String(WS_PATH));
+  DEBUG_SERIAL.println("url  = ws://" + cfg.serverHost + ":" + String(cfg.wsPort) + String(WS_PATH));
 
-  webSocket.begin(cfg.serverHost.c_str(), cfg.wsPort, "/ws/device");
+  webSocket.begin(cfg.serverHost.c_str(), cfg.wsPort, WS_PATH);
   webSocket.onEvent(webSocketEvent);
   webSocket.setReconnectInterval(5000);
   webSocket.enableHeartbeat(15000, 3000, 2);
@@ -1091,7 +1142,6 @@ void applyLightSettings(int br, int tp) {
 
   analogWrite(LED_COLD_PIN, 1024 - pwmCold);
   analogWrite(LED_WARM_PIN, 1024 - pwmWarm);
-  //DEBUG_SERIAL.printf("PWM Cold=%d, Warm=%d\n", pwmCold, pwmWarm);
 }
 
 void stopEffectWaveForManualControl() {
@@ -1107,12 +1157,8 @@ void locateBreath(int times, int cycleMs) {
   int oldBrightness = autoMode ? recommendedBrightness : brightness;
   int oldTemp = autoMode ? recommendedTemp : temp;
 
-  int minBrightness = 5;
-  int maxBrightness = 100;
   int locateTemp = 4500;
-
-  int steps = 36;
-  int stepDelay = cycleMs / steps;
+  int stepDelay = cycleMs / LOCATE_STEPS;
 
   DEBUG_SERIAL.printf(
     "[LOCATE] 呼吸灯开始 times=%d cycleMs=%d restoreB=%d restoreT=%d\n",
@@ -1123,10 +1169,10 @@ void locateBreath(int times, int cycleMs) {
   );
 
   for (int round = 0; round < times; round++) {
-    for (int i = 0; i <= steps; i++) {
-      float phase = (float)i / (float)steps * PI;
+    for (int i = 0; i <= LOCATE_STEPS; i++) {
+      float phase = (float)i / (float)LOCATE_STEPS * PI;
 
-      int br = minBrightness + int(sin(phase) * (maxBrightness - minBrightness));
+      int br = LOCATE_MIN_BRIGHTNESS + int(sin(phase) * (LOCATE_MAX_BRIGHTNESS - LOCATE_MIN_BRIGHTNESS));
 
       applyLightSettings(br, locateTemp);
 
@@ -1151,7 +1197,7 @@ void updateEffectLoop() {
   lastEffectUpdateMs = now;
 
   float elapsedSec = (now - effectStartMs) / 1000.0f;
-  float phase = elapsedSec * 0.32f * effectSpeed + effectPhaseOffset;
+  float phase = elapsedSec * WAVE_FREQ_FACTOR * effectSpeed + effectPhaseOffset;
   int targetTemp = (int)round(effectBaseTemp + sin(phase) * effectRange);
   targetTemp = constrain(targetTemp, 2700, 6500);
   int targetBrightness = constrain(effectBrightness, 0, 100);
@@ -1166,25 +1212,13 @@ void updateEffectLoop() {
 void sendStayRecordToServer(unsigned long durationSeconds) {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  WiFiClient client;
-  HTTPClient http;
-  http.begin(client, httpUrl("/admin/duration/create"));
-  http.addHeader("Content-Type", "application/json");
-
   StaticJsonDocument<192> doc;
   doc["chipId"] = deviceId;
   doc["durationValue"] = durationSeconds * 1000UL;
 
   String payload;
   serializeJson(doc, payload);
-
-  int httpCode = http.POST(payload);
-  DEBUG_SERIAL.printf("[HTTP] /admin/duration/create -> %d\n", httpCode);
-  if (httpCode > 0) {
-    DEBUG_SERIAL.println(http.getString());
-  }
-
-  http.end();
+  postJsonToServer("/admin/duration/create", payload);
 }
 
 void updateLightingByToF() {
@@ -1199,9 +1233,6 @@ void updateLightingByToF() {
       digitalWrite(BLUR, HIGH);
     }
 
-    //int level = digitalRead(BLUR);
-    //DEBUG_SERIAL.printf("BLUR电平 = %d (%s)\n", level, level ? "HIGH" : "LOW");
-
     if (now - lastLightUpdate > lightUpdateInterval) {
       applyLightSettings(br, tp);
       lastLightUpdate = now;
@@ -1209,10 +1240,17 @@ void updateLightingByToF() {
     return;
   }
 
+  unsigned long now = millis();
   VL53L0X_RangingMeasurementData_t measure;
-  lox.rangingTest(&measure, false);
 
-  if (measure.RangeMilliMeter > 8200) return;
+  if (now - lastToFRead >= TOF_READ_INTERVAL_MS) {
+    lox.rangingTest(&measure, false);
+    lastToFRead = now;
+  } else {
+    return;
+  }
+
+  if (measure.RangeMilliMeter > TOF_MAX_RANGE_MM) return;
 
   static bool wasNearby = false;
   static unsigned long transitionStart = 0;
@@ -1220,7 +1258,6 @@ void updateLightingByToF() {
   static unsigned long leftStart = 0;
 
   bool currentNearby = (measure.RangeMilliMeter < 2000);
-  unsigned long now = millis();
 
   DEBUG_SERIAL.printf("测距: %d mm\n", measure.RangeMilliMeter);
 
@@ -1228,7 +1265,7 @@ void updateLightingByToF() {
     if (currentNearby && !wasNearby) {
       if (detectedStart == 0) {
         detectedStart = now;
-      } else if (now - detectedStart >= 1000) {
+      } else if (now - detectedStart >= TOF_DEBOUNCE_MS) {
         transitionStart = now;
         wasNearby = true;
         leftStart = 0;
@@ -1236,7 +1273,7 @@ void updateLightingByToF() {
     } else if (!currentNearby && wasNearby) {
       if (leftStart == 0) {
         leftStart = now;
-      } else if (now - leftStart >= 1000) {
+      } else if (now - leftStart >= TOF_DEBOUNCE_MS) {
         transitionStart = now;
         wasNearby = false;
         unsigned long stayDurationSeconds = (now - detectedStart) / 1000;
@@ -1249,7 +1286,7 @@ void updateLightingByToF() {
     }
   }
 
-  float ratio = float(now - transitionStart) / 2000.0f;
+  float ratio = float(now - transitionStart) / TOF_TRANSITION_MS;
   if (ratio > 1.0f) ratio = 1.0f;
 
   int br = brightness;
@@ -1285,11 +1322,12 @@ void broadcastDevice() {
   if (millis() - lastBroadcast > broadcastInterval) {
     lastBroadcast = millis();
 
-    IPAddress broadcastIP = calcBroadcastIP();
+    if (!broadcastIPCached) refreshBroadcastIP();
+
     String msg = "{\"type\":\"announce\",\"device\":\"" + String(FW_DEVICE_TYPE) + "\",\"id\":\"" + deviceId +
                  "\",\"ip\":\"" + WiFi.localIP().toString() + "\"}";
 
-    udp.beginPacket(broadcastIP, udpPort);
+    udp.beginPacket(cachedBroadcastIP, udpPort);
     udp.write((const uint8_t*)msg.c_str(), msg.length());
     udp.endPacket();
 
@@ -1299,11 +1337,6 @@ void broadcastDevice() {
 
 void sendDeviceStateReport() {
   if (WiFi.status() != WL_CONNECTED) return;
-
-  WiFiClient client;
-  HTTPClient http;
-  http.begin(client, httpUrl("/admin/device/state-report"));
-  http.addHeader("Content-Type", "application/json");
 
   StaticJsonDocument<448> doc;
   doc["chipId"] = deviceId;
@@ -1323,25 +1356,11 @@ void sendDeviceStateReport() {
 
   String json;
   serializeJson(doc, json);
-
-  int httpCode = http.POST(json);
-  if (httpCode > 0) {
-    DEBUG_SERIAL.printf("[STATE] report code: %d\n", httpCode);
-    DEBUG_SERIAL.println(http.getString());
-  } else {
-    DEBUG_SERIAL.printf("[STATE] report failed: %s\n", http.errorToString(httpCode).c_str());
-  }
-
-  http.end();
+  postJsonToServer("/admin/device/state-report", json);
 }
 
 void sendAnnounce() {
   if (!enableAnnounce || WiFi.status() != WL_CONNECTED) return;
-
-  WiFiClient client;
-  HTTPClient http;
-  http.begin(client, httpUrl("/admin/device/announce"));
-  http.addHeader("Content-Type", "application/json");
 
   StaticJsonDocument<256> doc;
   doc["chipId"] = deviceId;
@@ -1350,6 +1369,11 @@ void sendAnnounce() {
 
   String json;
   serializeJson(doc, json);
+
+  WiFiClient client;
+  HTTPClient http;
+  http.begin(client, httpUrl("/admin/device/announce"));
+  http.addHeader("Content-Type", "application/json");
 
   int httpCode = http.POST(json);
   if (httpCode > 0) {
@@ -1374,28 +1398,13 @@ void sendLightLevelToServer() {
   float lux = lightMeter.readLightLevel();
   DEBUG_SERIAL.printf("当前光照值：%.2f lux\n", lux);
 
-  WiFiClient client;
-  HTTPClient http;
-  http.begin(client, httpUrl("/admin/lux/create"));
-  http.addHeader("Content-Type", "application/json");
-
   StaticJsonDocument<192> doc;
   doc["chipId"] = deviceId;
   doc["luxValue"] = lux;
 
   String json;
   serializeJson(doc, json);
-
-  int httpCode = http.POST(json);
-
-  if (httpCode > 0) {
-    DEBUG_SERIAL.printf("光照上传成功，返回码: %d\n", httpCode);
-    DEBUG_SERIAL.println(http.getString());
-  } else {
-    DEBUG_SERIAL.printf("光照上传失败: %s\n", http.errorToString(httpCode).c_str());
-  }
-
-  http.end();
+  postJsonToServer("/admin/lux/create", json);
 }
 
 // ===================== 初始化 =====================
@@ -1429,11 +1438,19 @@ void setupHardwareAndSensors() {
 bool ensureWiFiReady() {
   if (WiFi.status() == WL_CONNECTED) return true;
 
+  broadcastIPCached = false;
+
   DEBUG_SERIAL.println("[WiFi] 已断开，尝试重连已保存网络...");
-  if (connectSavedWiFi()) return true;
+  if (connectSavedWiFi()) {
+    broadcastIPCached = false;
+    return true;
+  }
 
   DEBUG_SERIAL.println("[WiFi] 已保存网络重连失败，尝试 SmartConfig...");
-  if (smartConfigProvision(smartConfigTimeout)) return true;
+  if (smartConfigProvision(smartConfigTimeout)) {
+    broadcastIPCached = false;
+    return true;
+  }
 
   DEBUG_SERIAL.println("[WiFi] 进入 AP 配网模式");
   startConfigPortal();
@@ -1479,6 +1496,7 @@ void setup() {
     return;
   }
 
+  broadcastIPCached = false;
   setupDeviceHttpServer();
   beginWebSocketClient();
   sendAnnounce();
