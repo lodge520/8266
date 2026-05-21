@@ -1,0 +1,14 @@
+.pio/
+.vscode/
+build/
+dist/
+logs/
+*.bin
+*.elf
+*.map
+*.log
+*.tmp
+*.swp
+*~
+.claude/
+test/
