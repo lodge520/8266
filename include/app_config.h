@@ -1,0 +1,136 @@
+#pragma once
+
+// ===================== 系统 Includes =====================
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <WiFiUdp.h>
+#include <ArduinoJson.h>
+#include <WebSocketsClient.h>
+#include <ESP8266HTTPClient.h>
+#include <ESP8266httpUpdate.h>
+#include <LittleFS.h>
+#include <Wire.h>
+#include <Adafruit_VL53L0X.h>
+#include <BH1750.h>
+
+// ===================== 串口别名 =====================
+#define nanoSerial Serial1
+#define DEBUG_SERIAL Serial
+
+// ===================== 引脚定义 =====================
+#define LED_COLD_PIN D2
+#define LED_WARM_PIN D1
+#define BLUR         D7
+#define TOF_SDA_PIN  D5
+#define TOF_SCL_PIN  D6
+
+// ===================== 固件信息 =====================
+#define FW_DEVICE_TYPE  "lamp"
+#define FW_VERSION      "1.0.2"
+#define FW_VERSION_CODE 10002
+#define FW_CHANNEL      "stable"
+
+// ===================== 命名常量 =====================
+const float   WAVE_FREQ_FACTOR          = 0.32f;
+const float   TOF_TRANSITION_MS         = 2000.0f;
+const uint16_t TOF_MAX_RANGE_MM         = 8200;
+const unsigned long TOF_DEBOUNCE_MS     = 1000;
+const unsigned long TOF_READ_INTERVAL_MS = 50;
+const char* const AP_DEFAULT_PASSWORD   = "12345678";
+const char* const WS_PATH               = "/ws/device";
+const int     LOCATE_MIN_BRIGHTNESS     = 5;
+const int     LOCATE_MAX_BRIGHTNESS     = 100;
+const int     LOCATE_STEPS              = 36;
+
+// ===================== 默认服务器配置 =====================
+const char* const DEFAULT_SERVER_HOST = "device.genius.show";
+const uint16_t DEFAULT_HTTP_PORT = 80;
+const uint16_t DEFAULT_WS_PORT   = 80;
+
+// ===================== 定时参数 =====================
+const unsigned long lightSendInterval    = 30000;
+const unsigned long lightUpdateInterval  = 50;
+const unsigned long wifiConnectTimeout   = 15000;
+const unsigned long smartConfigTimeout   = 60000;
+const unsigned long announceInterval     = 5000;
+const unsigned long broadcastInterval    = 5000;
+const unsigned long wsPingInterval       = 5000;
+const unsigned long otaProgressReportMinIntervalMs = 3000;
+const int           otaProgressReportMinStep       = 5;
+
+const int udpPort = 4210;
+const uint32_t NANO_BAUD = 57600;
+
+// ===================== DeviceConfig =====================
+struct DeviceConfig {
+  String ssid;
+  String password;
+  String serverHost;
+  uint16_t httpPort;
+  uint16_t wsPort;
+};
+
+// ===================== 传感器 / 外设 (extern) =====================
+extern BH1750 lightMeter;
+extern Adafruit_VL53L0X lox;
+extern WebSocketsClient webSocket;
+extern ESP8266WebServer server;
+extern WiFiUDP udp;
+
+// ===================== 运行状态 (extern) =====================
+extern bool bh1750Ready;
+extern bool tofReady;
+extern bool enableBroadcast;
+extern bool enableAnnounce;
+extern bool portalMode;
+extern bool otaInProgress;
+extern String firmwareChannel;
+extern String otaStatus;
+extern int otaProgress;
+extern int lastOtaProgressLog;
+extern int lastOtaProgressReport;
+extern unsigned long lastOtaProgressReportMs;
+
+extern unsigned long lastLightSend;
+extern unsigned long lastLightUpdate;
+extern unsigned long lastAnnounce;
+extern unsigned long lastBroadcast;
+extern unsigned long lastPing;
+extern unsigned long lastToFRead;
+
+extern IPAddress cachedBroadcastIP;
+extern bool broadcastIPCached;
+
+// ===================== 灯光控制参数 (extern) =====================
+extern int brightness;
+extern int temp;
+extern bool autoMode;
+extern int recommendedBrightness;
+extern int recommendedTemp;
+extern char fabric[16];
+
+extern bool effectWaveEnabled;
+extern int effectBaseTemp;
+extern int effectRange;
+extern float effectSpeed;
+extern int effectBrightness;
+extern float effectPhaseOffset;
+extern int effectRestoreBrightness;
+extern int effectRestoreTemp;
+extern unsigned long effectStartMs;
+extern unsigned long lastEffectUpdateMs;
+extern const unsigned long WAVE_UPDATE_INTERVAL_MS;
+
+// ===================== Nano 云台参数 (extern) =====================
+extern int panDeg;
+extern int tiltDeg;
+extern int sliderMm;
+extern int angleStep;
+extern int sliderStep;
+extern int panSpeedDeg;
+extern int tiltSpeedDeg;
+extern int sliderSpeedMm;
+
+// ===================== 设备配置 (extern) =====================
+extern DeviceConfig cfg;
+extern String deviceId;

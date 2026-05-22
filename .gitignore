@@ -12,6 +12,6 @@ logs/
 *~
 .claude/
 test/
-include/
 lib/
+include/README
 PROJECT_ANALYSIS.md
