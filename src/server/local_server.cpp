@@ -1,7 +1,7 @@
-#include "local_server.h"
-#include "light_control.h"
-#include "config_manager.h"
-#include "http_reporter.h"
+#include "server/local_server.h"
+#include "device/light_control.h"
+#include "config/config_manager.h"
+#include "network/http_reporter.h"
 
 void addCorsHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");

@@ -1,5 +1,5 @@
-#include "wifi_manager.h"
-#include "config_manager.h"
+#include "network/wifi_manager.h"
+#include "config/config_manager.h"
 
 // ---- HTML 配网页面 ----
 

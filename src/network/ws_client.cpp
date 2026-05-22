@@ -1,8 +1,8 @@
-#include "ws_client.h"
-#include "light_control.h"
-#include "arm_controller.h"
-#include "ota_manager.h"
-#include "http_reporter.h"
+#include "network/ws_client.h"
+#include "device/light_control.h"
+#include "device/arm_controller.h"
+#include "device/ota_manager.h"
+#include "network/http_reporter.h"
 
 void sendWsRegister() {
   StaticJsonDocument<320> doc;

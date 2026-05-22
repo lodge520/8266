@@ -1,4 +1,4 @@
-#include "light_control.h"
+#include "device/light_control.h"
 
 void applyLightSettings(int br, int tp) {
   tp = constrain(tp, 2700, 6500);

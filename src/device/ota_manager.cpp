@@ -1,6 +1,6 @@
-#include "ota_manager.h"
-#include "http_reporter.h"
-#include "ws_client.h"
+#include "device/ota_manager.h"
+#include "network/http_reporter.h"
+#include "network/ws_client.h"
 
 // ---- OTA 回调 ----
 

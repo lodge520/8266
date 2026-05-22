@@ -1,4 +1,4 @@
-#include "http_reporter.h"
+#include "network/http_reporter.h"
 
 String httpUrl(const String& path) {
   return "http://" + cfg.serverHost + ":" + String(cfg.httpPort) + path;

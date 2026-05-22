@@ -1,4 +1,4 @@
-#include "config_manager.h"
+#include "config/config_manager.h"
 
 String configPath() {
   return "/config.json";

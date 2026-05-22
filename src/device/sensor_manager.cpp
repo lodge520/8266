@@ -1,6 +1,6 @@
-#include "sensor_manager.h"
-#include "light_control.h"
-#include "http_reporter.h"
+#include "device/sensor_manager.h"
+#include "device/light_control.h"
+#include "network/http_reporter.h"
 
 void setupHardwareAndSensors() {
   pinMode(LED_COLD_PIN, OUTPUT);
