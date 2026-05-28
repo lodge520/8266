@@ -6,7 +6,7 @@ void setupHardwareAndSensors() {
   pinMode(LED_COLD_PIN, OUTPUT);
   pinMode(LED_WARM_PIN, OUTPUT);
   pinMode(BLUR, OUTPUT);
-  digitalWrite(BLUR, HIGH);
+  digitalWrite(BLUR, LOW);
   analogWriteRange(1024);
 
   Wire.begin(TOF_SDA_PIN, TOF_SCL_PIN);
@@ -35,11 +35,8 @@ void updateLightingByToF() {
     int tp = autoMode ? recommendedTemp : temp;
     unsigned long now = millis();
 
-    if (autoMode && strcmp(fabric, "polyester") == 0) {
-      digitalWrite(BLUR, LOW);
-    } else {
-      digitalWrite(BLUR, HIGH);
-    }
+    // ToF 不可用时无法检测有人/无人，BLUR 一律 LOW
+    digitalWrite(BLUR, LOW);
 
     if (now - lastLightUpdate > lightUpdateInterval) {
       applyLightSettings(br, tp);
@@ -94,6 +91,16 @@ void updateLightingByToF() {
     }
   }
 
+  // ---- Lux P 控制器：无人时根据环境光自动调节亮度 ----
+  static unsigned long lastLuxAutoRead = 0;
+  if (autoMode && bh1750Ready && (now - lastLuxAutoRead > 2000)) {
+    float lux = lightMeter.readLightLevel();
+    int error = luxAutoTarget - (int)lux;
+    luxAutoBrightness += (int)(error * 0.1f);
+    luxAutoBrightness = constrain(luxAutoBrightness, 5, 100);
+    lastLuxAutoRead = now;
+  }
+
   float ratio = float(now - transitionStart) / TOF_TRANSITION_MS;
   if (ratio > 1.0f) ratio = 1.0f;
 
@@ -101,21 +108,20 @@ void updateLightingByToF() {
   int tp = temp;
 
   if (autoMode) {
+    int idleBrightness = bh1750Ready ? luxAutoBrightness : brightness;
+
     if (wasNearby) {
       br = brightness + int((recommendedBrightness - brightness) * ratio);
       tp = temp + int((recommendedTemp - temp) * ratio);
-
-      if (strcmp(fabric, "polyester") == 0) {
-        digitalWrite(BLUR, LOW);
-      } else {
-        digitalWrite(BLUR, HIGH);
-      }
     } else {
-      br = recommendedBrightness + int((brightness - recommendedBrightness) * ratio);
+      br = recommendedBrightness + int((idleBrightness - recommendedBrightness) * ratio);
       tp = recommendedTemp + int((temp - recommendedTemp) * ratio);
-      digitalWrite(BLUR, HIGH);
     }
   }
+
+  // BLUR HIGH 仅当: 自动模式 + 有人靠近 + 聚酯纤维
+  bool blurHigh = (autoMode && wasNearby && strcmp(fabric, "polyester") == 0);
+  digitalWrite(BLUR, blurHigh ? HIGH : LOW);
 
   if (now - lastLightUpdate > lightUpdateInterval) {
     applyLightSettings(br, tp);

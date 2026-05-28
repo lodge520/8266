@@ -23,7 +23,7 @@ String getPortalHtml() {
   <div class="box">
     <h2>灯节点配网</h2>
     <p>设备ID：__DEVICE_ID__</p>
-    <p class="tip">先尝试 SmartConfig。失败后可手动填 Wi-Fi 和服务器信息。</p>
+    <p class="tip">设备优先通过 SmartConfig 配网；若连接失败则自动切换到此 AP 配网页面。</p>
 
     <form action="/saveWifi" method="POST">
       <label>Wi-Fi 名称</label>
@@ -88,109 +88,12 @@ bool connectSavedWiFi() {
   return connectWiFi(cfg.ssid, cfg.password, wifiConnectTimeout);
 }
 
-// ---- SmartConfig ----
+// ---- 串行配网 (SmartConfig 优先, AP 后备) ----
 
-bool smartConfigProvision(unsigned long timeoutMs) {
-  DEBUG_SERIAL.println("[SmartConfig] 等待批量配网...");
-  WiFi.mode(WIFI_STA);
-  WiFi.beginSmartConfig();
-
-  unsigned long start = millis();
-  while (!WiFi.smartConfigDone() && millis() - start < timeoutMs) {
-    delay(500);
-    DEBUG_SERIAL.print("#");
-    yield();
-  }
-  DEBUG_SERIAL.println();
-
-  if (!WiFi.smartConfigDone()) {
-    DEBUG_SERIAL.println("[SmartConfig] 超时");
-
-    // 停止 SmartConfig，否则后面切 AP 可能失败
-    WiFi.stopSmartConfig();
-    delay(300);
-    WiFi.disconnect(true);
-    delay(300);
-
-    return false;
-  }
-
-  DEBUG_SERIAL.println("[SmartConfig] 已收到配网信息，等待联网...");
-  start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
-    delay(500);
-    DEBUG_SERIAL.print(".");
-    yield();
-  }
-  DEBUG_SERIAL.println();
-
-  if (WiFi.status() != WL_CONNECTED) {
-    DEBUG_SERIAL.println("[SmartConfig] 联网失败");
-
-    WiFi.stopSmartConfig();
-    WiFi.disconnect(true);
-    delay(300);
-
-    return false;
-  }
-
-  DeviceConfig newCfg;
-  newCfg.ssid = WiFi.SSID();
-  newCfg.password = WiFi.psk();
-  newCfg.serverHost = cfg.serverHost;
-  newCfg.httpPort = cfg.httpPort;
-  newCfg.wsPort = cfg.wsPort;
-  ensureConfigDefaults(newCfg);
-
-  cfg = newCfg;
-  saveConfig(cfg);
-
-  WiFi.stopSmartConfig();
-
-  DEBUG_SERIAL.println("[SmartConfig] 成功，已保存配置");
-  return true;
-}
-
-// ---- AP Portal 配网 ----
-
-void startConfigPortal() {
-  portalMode = true;
-
-  WiFi.persistent(false);
-
-  WiFi.disconnect(true);
-  delay(500);
-
-  WiFi.mode(WIFI_OFF);
-  delay(500);
-
-  WiFi.mode(WIFI_AP);
-  delay(300);
-
-  IPAddress apIP(192, 168, 4, 1);
-  IPAddress gateway(192, 168, 4, 1);
-  IPAddress subnet(255, 255, 255, 0);
-
-  bool configOk = WiFi.softAPConfig(apIP, gateway, subnet);
-  DEBUG_SERIAL.println(configOk ? "[AP] IP配置成功" : "[AP] IP配置失败");
-
-  String apName = "LightConfig_" + deviceId;
-
-  bool apOk = WiFi.softAP(apName.c_str(), AP_DEFAULT_PASSWORD, 1, false, 4);
-
-  DEBUG_SERIAL.println("[AP] 进入网页配网模式");
-  DEBUG_SERIAL.println("[AP] 热点名称: " + apName);
-  DEBUG_SERIAL.println("[AP] 密码: " + String(AP_DEFAULT_PASSWORD));
-
-  if (!apOk) {
-    DEBUG_SERIAL.println("[AP] 热点启动失败！");
-    return;
-  }
-
-  delay(500);
-
-  DEBUG_SERIAL.println("[AP] IP: " + WiFi.softAPIP().toString());
-  DEBUG_SERIAL.println("[AP] 打开: http://" + WiFi.softAPIP().toString());
+static void ensureProvisionRoutes() {
+  static bool registered = false;
+  if (registered) return;
+  registered = true;
 
   server.on("/", HTTP_GET, []() {
     server.send(200, "text/html; charset=utf-8", getPortalHtml());
@@ -216,6 +119,13 @@ void startConfigPortal() {
       return;
     }
 
+    DEBUG_SERIAL.println("[PROV] AP config saved, restarting...");
+
+    if (smartConfigActive) {
+      WiFi.stopSmartConfig();
+      smartConfigActive = false;
+    }
+
     server.send(200, "text/html; charset=utf-8", "<h3>保存成功，设备即将重启...</h3>");
     delay(1200);
     ESP.restart();
@@ -223,12 +133,116 @@ void startConfigPortal() {
 
   server.on("/resetWifi", HTTP_POST, []() {
     clearConfig();
+    DEBUG_SERIAL.println("[PROV] Config cleared via AP, restarting...");
     server.send(200, "text/html; charset=utf-8", "<h3>已清除配置，设备即将重启...</h3>");
     delay(1200);
     ESP.restart();
   });
+}
 
+void startAPPortal() {
+  // 先停掉正在运行的 SmartConfig
+  if (smartConfigActive) {
+    WiFi.stopSmartConfig();
+    smartConfigActive = false;
+  }
+
+  WiFi.disconnect(true);
+  delay(500);
+  WiFi.mode(WIFI_AP);
+  delay(300);
+
+  IPAddress apIP(192, 168, 4, 1);
+  IPAddress gateway(192, 168, 4, 1);
+  IPAddress subnet(255, 255, 255, 0);
+  WiFi.softAPConfig(apIP, gateway, subnet);
+
+  String apName = "LightConfig_" + deviceId;
+  bool apOk = WiFi.softAP(apName.c_str(), AP_DEFAULT_PASSWORD, 1, false, 4);
+
+  DEBUG_SERIAL.println("[PROV] ====== AP portal started ======");
+  DEBUG_SERIAL.println("[PROV] AP SSID: " + apName);
+  DEBUG_SERIAL.println("[PROV] AP password: " + String(AP_DEFAULT_PASSWORD));
+
+  if (apOk) {
+    DEBUG_SERIAL.println("[PROV] AP portal ready -> http://" + WiFi.softAPIP().toString());
+  } else {
+    DEBUG_SERIAL.println("[PROV] AP start failed!");
+  }
+
+  ensureProvisionRoutes();
   server.begin();
+}
+
+void startParallelProvision() {
+  provisioningMode = true;
+
+  // SmartConfig 优先：纯 STA 模式（ESP8266 只能 STA 模式启动 SmartConfig）
+  WiFi.mode(WIFI_STA);
+  delay(300);
+
+  bool scOk = WiFi.beginSmartConfig();
+  smartConfigActive = scOk;
+  smartConfigDoneHandled = false;
+  smartConfigStartMs = millis();
+
+  if (scOk) {
+    DEBUG_SERIAL.println("[PROV] SmartConfig listening (AirKiss, " + String(smartConfigTimeout / 1000) + "s timeout)");
+    ensureProvisionRoutes();
+  } else {
+    DEBUG_SERIAL.println("[PROV] SmartConfig failed, falling back to AP portal");
+    startAPPortal();
+  }
+}
+
+void handleProvisioningLoop() {
+  if (smartConfigActive) {
+    if (!smartConfigDoneHandled) {
+      if (WiFi.smartConfigDone()) {
+        smartConfigDoneHandled = true;
+        DEBUG_SERIAL.println("[PROV] SmartConfig received credentials, connecting...");
+
+        unsigned long connectStart = millis();
+        while (WiFi.status() != WL_CONNECTED && millis() - connectStart < 20000) {
+          delay(100);
+          yield();
+        }
+
+        if (WiFi.status() == WL_CONNECTED) {
+          DeviceConfig newCfg;
+          newCfg.ssid = WiFi.SSID();
+          newCfg.password = WiFi.psk();
+          newCfg.serverHost = cfg.serverHost;
+          newCfg.httpPort = cfg.httpPort;
+          newCfg.wsPort = cfg.wsPort;
+          ensureConfigDefaults(newCfg);
+          cfg = newCfg;
+          saveConfig(cfg);
+
+          DEBUG_SERIAL.println("[PROV] SmartConfig config saved, restarting...");
+          WiFi.stopSmartConfig();
+          smartConfigActive = false;
+          delay(500);
+          ESP.restart();
+        } else {
+          DEBUG_SERIAL.println("[PROV] SmartConfig connect failed, falling back to AP portal");
+          startAPPortal();
+        }
+        return;
+      }
+
+      static unsigned long lastScLog = 0;
+      if (millis() - lastScLog > 15000) {
+        lastScLog = millis();
+        DEBUG_SERIAL.println("[PROV] SmartConfig still waiting...");
+      }
+
+      if (millis() - smartConfigStartMs > smartConfigTimeout) {
+        DEBUG_SERIAL.println("[PROV] SmartConfig timeout, falling back to AP portal");
+        startAPPortal();
+      }
+    }
+  }
 }
 
 // ---- WiFi 保活 ----
@@ -238,19 +252,13 @@ bool ensureWiFiReady() {
 
   broadcastIPCached = false;
 
-  DEBUG_SERIAL.println("[WiFi] 已断开，尝试重连已保存网络...");
+  DEBUG_SERIAL.println("[WiFi] Disconnected, trying saved network...");
   if (connectSavedWiFi()) {
     broadcastIPCached = false;
     return true;
   }
 
-  DEBUG_SERIAL.println("[WiFi] 已保存网络重连失败，尝试 SmartConfig...");
-  if (smartConfigProvision(smartConfigTimeout)) {
-    broadcastIPCached = false;
-    return true;
-  }
-
-  DEBUG_SERIAL.println("[WiFi] 进入 AP 配网模式");
-  startConfigPortal();
+  DEBUG_SERIAL.println("[WiFi] Saved network failed, starting parallel provisioning...");
+  startParallelProvision();
   return false;
 }

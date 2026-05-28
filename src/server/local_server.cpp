@@ -46,6 +46,7 @@ void handleSetLight() {
   autoMode = doc["auto"] | autoMode;
   recommendedBrightness = doc["recommendedBrightness"] | recommendedBrightness;
   recommendedTemp = doc["recommendedTemp"] | recommendedTemp;
+  luxAutoTarget = doc["luxAutoTarget"] | luxAutoTarget;
   safeCopyFabric(doc["fabric"]);
 
   DEBUG_SERIAL.printf("收到 HTTP 控制: bri=%d temp=%d auto=%d recB=%d recT=%d fabric=%s\n",

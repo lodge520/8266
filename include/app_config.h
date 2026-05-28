@@ -26,8 +26,8 @@
 
 // ===================== 固件信息 =====================
 #define FW_DEVICE_TYPE  "lamp"
-#define FW_VERSION      "1.0.2"
-#define FW_VERSION_CODE 10002
+#define FW_VERSION      "1.0.3"
+#define FW_VERSION_CODE 10003
 #define FW_CHANNEL      "stable"
 
 // ===================== 命名常量 =====================
@@ -51,7 +51,8 @@ const uint16_t DEFAULT_WS_PORT   = 80;
 const unsigned long lightSendInterval    = 30000;
 const unsigned long lightUpdateInterval  = 50;
 const unsigned long wifiConnectTimeout   = 15000;
-const unsigned long smartConfigTimeout   = 60000;
+const unsigned long smartConfigTimeout   = 300000;
+
 const unsigned long announceInterval     = 5000;
 const unsigned long broadcastInterval    = 5000;
 const unsigned long wsPingInterval       = 5000;
@@ -63,8 +64,8 @@ const uint32_t NANO_BAUD = 57600;
 
 // ===================== DeviceConfig =====================
 struct DeviceConfig {
-  String ssid;
-  String password;
+  String ssid = "somebody的iPhone";
+  String password = "20040000";
   String serverHost;
   uint16_t httpPort;
   uint16_t wsPort;
@@ -82,7 +83,10 @@ extern bool bh1750Ready;
 extern bool tofReady;
 extern bool enableBroadcast;
 extern bool enableAnnounce;
-extern bool portalMode;
+extern bool provisioningMode;
+extern bool smartConfigActive;
+extern bool smartConfigDoneHandled;
+extern unsigned long smartConfigStartMs;
 extern bool otaInProgress;
 extern String firmwareChannel;
 extern String otaStatus;
@@ -107,6 +111,8 @@ extern int temp;
 extern bool autoMode;
 extern int recommendedBrightness;
 extern int recommendedTemp;
+extern int luxAutoTarget;
+extern int luxAutoBrightness;
 extern char fabric[16];
 
 extern bool effectWaveEnabled;

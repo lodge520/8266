@@ -27,12 +27,8 @@ void sendDeviceStateReport() {
   doc["chipId"] = deviceId;
   doc["deviceType"] = FW_DEVICE_TYPE;
   doc["ip"] = WiFi.localIP().toString();
-  doc["brightness"] = brightness;
-  doc["temp"] = temp;
-  doc["autoMode"] = autoMode;
-  doc["recommendedBrightness"] = recommendedBrightness;
-  doc["recommendedTemp"] = recommendedTemp;
-  doc["fabric"] = fabric;
+  doc["luxAutoTarget"] = luxAutoTarget;
+  doc["luxAutoBrightness"] = luxAutoBrightness;
   doc["firmwareVersion"] = FW_VERSION;
   doc["firmwareVersionCode"] = FW_VERSION_CODE;
   doc["firmwareChannel"] = FW_CHANNEL;

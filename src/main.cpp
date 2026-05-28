@@ -22,7 +22,10 @@ bool bh1750Ready = false;
 bool tofReady = false;
 bool enableBroadcast = true;
 bool enableAnnounce = true;
-bool portalMode = false;
+bool provisioningMode = false;
+bool smartConfigActive = false;
+bool smartConfigDoneHandled = false;
+unsigned long smartConfigStartMs = 0;
 bool otaInProgress = false;
 String firmwareChannel = FW_CHANNEL;
 String otaStatus = "idle";
@@ -47,6 +50,8 @@ int temp = 4000;
 bool autoMode = true;
 int recommendedBrightness = 80;
 int recommendedTemp = 4000;
+int luxAutoTarget = 300;
+int luxAutoBrightness = 50;
 char fabric[16] = "unknown";
 
 bool effectWaveEnabled = false;
@@ -99,18 +104,14 @@ void setup() {
   bool wifiOk = false;
 
   if (hasConfig) {
-    DEBUG_SERIAL.println("[BOOT] 检测到本地配置，尝试直连");
+    DEBUG_SERIAL.println("[BOOT] Saved config found, trying to connect...");
     wifiOk = connectSavedWiFi();
   } else {
-    DEBUG_SERIAL.println("[BOOT] 没有本地配置");
+    DEBUG_SERIAL.println("[BOOT] No saved config, entering parallel provisioning...");
   }
 
   if (!wifiOk) {
-    wifiOk = smartConfigProvision(smartConfigTimeout);
-  }
-
-  if (!wifiOk) {
-    startConfigPortal();
+    startParallelProvision();
     return;
   }
 
@@ -125,7 +126,11 @@ void loop() {
   server.handleClient();
   pollNano();
 
-  if (portalMode) return;
+  if (provisioningMode) {
+    handleProvisioningLoop();
+    return;
+  }
+
   if (otaInProgress) return;
 
   if (!ensureWiFiReady()) return;

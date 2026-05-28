@@ -60,6 +60,7 @@ void handleWsMessage(const String& text) {
     temp = payload["temp"] | temp;
     recommendedBrightness = payload["recommendedBrightness"] | recommendedBrightness;
     recommendedTemp = payload["recommendedTemp"] | recommendedTemp;
+    luxAutoTarget = payload["luxAutoTarget"] | luxAutoTarget;
 
     if (payload.containsKey("autoMode")) {
       autoMode = payload["autoMode"];
