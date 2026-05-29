@@ -14,8 +14,10 @@
 #include <BH1750.h>
 
 // ===================== 串口别名 =====================
-#define nanoSerial Serial1
-#define DEBUG_SERIAL Serial
+// Serial(GPIO1/GPIO3) 专门用于和 Nano 通信（全双工）
+// Serial1(GPIO2) 专门用于调试输出（仅发送）
+#define nanoSerial Serial
+#define DEBUG_SERIAL Serial1
 
 // ===================== 引脚定义 =====================
 #define LED_COLD_PIN D2
@@ -26,8 +28,8 @@
 
 // ===================== 固件信息 =====================
 #define FW_DEVICE_TYPE  "lamp"
-#define FW_VERSION      "1.0.3"
-#define FW_VERSION_CODE 10003
+#define FW_VERSION      "1.0.4"
+#define FW_VERSION_CODE 10004
 #define FW_CHANNEL      "stable"
 
 // ===================== 命名常量 =====================
@@ -46,12 +48,14 @@ const int     LOCATE_STEPS              = 36;
 const char* const DEFAULT_SERVER_HOST = "device.genius.show";
 const uint16_t DEFAULT_HTTP_PORT = 80;
 const uint16_t DEFAULT_WS_PORT   = 80;
+const char* const DEFAULT_WIFI_SSID = "NaHS";
+const char* const DEFAULT_WIFI_PASSWORD = "123456789";
 
 // ===================== 定时参数 =====================
 const unsigned long lightSendInterval    = 30000;
 const unsigned long lightUpdateInterval  = 50;
 const unsigned long wifiConnectTimeout   = 15000;
-const unsigned long smartConfigTimeout   = 300000;
+const unsigned long smartConfigTimeout   = 30000;
 
 const unsigned long announceInterval     = 5000;
 const unsigned long broadcastInterval    = 5000;
@@ -64,8 +68,8 @@ const uint32_t NANO_BAUD = 57600;
 
 // ===================== DeviceConfig =====================
 struct DeviceConfig {
-  String ssid = "somebody的iPhone";
-  String password = "20040000";
+  String ssid = DEFAULT_WIFI_SSID;
+  String password = DEFAULT_WIFI_PASSWORD;
   String serverHost;
   uint16_t httpPort;
   uint16_t wsPort;

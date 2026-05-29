@@ -153,12 +153,73 @@ void handleWsMessage(const String& text) {
     return;
   }
 
+  if (type == "arm_joystick") {
+    float x = payload["x"] | 0.0f;
+    float y = payload["y"] | 0.0f;
+    int durationMs = payload["durationMs"] | 500;
+
+    setArmJoystickMotion(x, y, durationMs);
+    return;
+  }
+
+  if (type == "arm_stop") {
+    stopArmJoystickMotion();
+    return;
+  }
+
+  if (type == "arm_position") {
+    bool changed = false;
+
+    stopArmJoystickMotion();
+
+    if (payload.containsKey("pan")) {
+      panDeg = payload["pan"].as<int>();
+      panDeg = constrain(panDeg, PAN_MIN, PAN_MAX);
+      sendNano('p', String(panDeg, 2));
+      changed = true;
+    }
+
+    if (payload.containsKey("tilt")) {
+      tiltDeg = payload["tilt"].as<int>();
+      tiltDeg = constrain(tiltDeg, TILT_MIN, TILT_MAX);
+      sendNano('t', String(tiltDeg, 2));
+      changed = true;
+    }
+
+    if (payload.containsKey("slider")) {
+      sliderMm = payload["slider"].as<int>();
+      sliderMm = constrain(sliderMm, SLIDER_MIN, SLIDER_MAX);
+      sendNano('x', String(sliderMm, 2));
+      changed = true;
+    }
+
+    if (!changed) {
+      DEBUG_SERIAL.println("[ARM] arm_position missing pan/tilt/slider");
+    }
+
+    return;
+  }
+
+  if (type == "arm_speed") {
+    String speed = payload["speed"] | "normal";
+    speed.trim();
+
+    if (speed.length() == 0) {
+      speed = "normal";
+    }
+
+    applyArmSpeed(speed);
+    DEBUG_SERIAL.println("[ARM] speed changed: " + speed);
+    return;
+  }
+
   if (type == "arm") {
     String action = payload["action"] | "";
-    String speed = payload["speed"] | "normal";
+    action.trim();
 
     if (action.length() == 0) {
       action = payload["direction"] | "";
+      action.trim();
     }
 
     if (action.length() == 0) {
@@ -166,7 +227,7 @@ void handleWsMessage(const String& text) {
       return;
     }
 
-    handleArmAction(action, speed);
+    handleArmAction(action);
     return;
   }
 

@@ -31,13 +31,13 @@ bool saveConfig(const DeviceConfig& c) {
 }
 
 bool loadConfig() {
-  cfg.ssid = "";
-  cfg.password = "";
+  cfg.ssid = DEFAULT_WIFI_SSID;
+  cfg.password = DEFAULT_WIFI_PASSWORD;
   cfg.serverHost = DEFAULT_SERVER_HOST;
   cfg.httpPort = DEFAULT_HTTP_PORT;
   cfg.wsPort = DEFAULT_WS_PORT;
 
-  if (!LittleFS.exists(configPath())) return false;
+  if (!LittleFS.exists(configPath())) return cfg.ssid.length() > 0;
 
   File f = LittleFS.open(configPath(), "r");
   if (!f) return false;
@@ -47,8 +47,8 @@ bool loadConfig() {
   f.close();
   if (err) return false;
 
-  cfg.ssid = doc["ssid"] | "";
-  cfg.password = doc["password"] | "";
+  cfg.ssid = doc["ssid"] | DEFAULT_WIFI_SSID;
+  cfg.password = doc["password"] | DEFAULT_WIFI_PASSWORD;
   cfg.serverHost = doc["serverHost"] | DEFAULT_SERVER_HOST;
   cfg.httpPort = doc["httpPort"] | DEFAULT_HTTP_PORT;
   cfg.wsPort = doc["wsPort"] | DEFAULT_WS_PORT;

@@ -100,6 +100,10 @@ void setup() {
 
   setupHardwareAndSensors();
 
+  // 初始化 Nano 云台：细分配置 + 默认速度
+  sendNano('m', "16");
+  applyArmSpeed("normal");
+
   bool hasConfig = loadConfig();
   bool wifiOk = false;
 
@@ -136,6 +140,10 @@ void loop() {
   if (!ensureWiFiReady()) return;
 
   webSocket.loop();
+
+  // 摇杆连续运动更新 (每帧)
+  updateArmJoystickMotion();
+
   broadcastDevice();
 
   if (effectWaveEnabled) {

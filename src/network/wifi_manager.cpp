@@ -85,7 +85,23 @@ bool connectWiFi(const String& ssid, const String& password, unsigned long timeo
 
 bool connectSavedWiFi() {
   if (cfg.ssid.length() == 0) return false;
-  return connectWiFi(cfg.ssid, cfg.password, wifiConnectTimeout);
+
+  if (connectWiFi(cfg.ssid, cfg.password, wifiConnectTimeout)) {
+    return true;
+  }
+
+  if (cfg.ssid == DEFAULT_WIFI_SSID && cfg.password == DEFAULT_WIFI_PASSWORD) {
+    return false;
+  }
+
+  DEBUG_SERIAL.println("[WiFi] Saved network failed, trying default network...");
+  if (!connectWiFi(DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASSWORD, wifiConnectTimeout)) {
+    return false;
+  }
+
+  cfg.ssid = DEFAULT_WIFI_SSID;
+  cfg.password = DEFAULT_WIFI_PASSWORD;
+  return true;
 }
 
 // ---- 串行配网 (SmartConfig 优先, AP 后备) ----
